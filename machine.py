@@ -5,10 +5,23 @@ import matplotlib.pyplot as plt
 from linefont import linefont
 import re
 
-class Plotter():
-
-    def __init__(self, port, printSer=False):
+class Plotter():    
+    def __init__(self, port=None, printSer=False):
         # ser = None
+        if port is None:    
+            print('Searching for port...')
+            ports = serial.tools.list_ports.comports(include_links=False)
+            for port in ports :
+                print('Found port '+ port.device)
+
+            ser = serial.Serial(port.device)
+            if ser.isOpen():
+                ser.close()
+
+            ser = serial.Serial(port.device, 9600, timeout=1)
+            ser.flushInput()
+            ser.flushOutput()
+            
         self._ser = serial.Serial(port, 115200)
 
         self.printSer = printSer
@@ -283,3 +296,6 @@ class Plotter():
             self._runningEvent.clear()
             self._runningEvent.wait()
             self._ser.close()
+
+# test
+p = Plotter(printSer=True)

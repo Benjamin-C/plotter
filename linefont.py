@@ -1,7 +1,3 @@
-# (x, y, liftonredraw)
-# If lift is true or omitted, the line will be drawn from the previous point to this point when redraw is enabled.
-# If lift is false, the line from the previous point to this point will not be drawn
-# Use values from 0-1 as a fraction of the size (width/height) of the character
 linefont = {"A":[(0, 0), (0, 0.5), (0.5, 1), (1, 0.5), (0, 0.5, True), (1, 0.5), (1, 0)],
             "B":[(0, 0), (0, 1), (0.5, 1), (1, 0.75), (0.5, 0.5), (0, 0.5), (0.5, 0.5, True), (1, 0.25), (0.5, 0), (0, 0)],
             "C":[(1, 0), (0.5, 0), (0, 0.5), (0.5, 1), (1,1)],

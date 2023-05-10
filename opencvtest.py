@@ -21,8 +21,8 @@ if platform.system() == 'Linux':
     camport = "/dev/video16"
     serport = "/dev/ttyUSB0"
 elif platform.system() == 'Darwin':
-    camport = "something"
-    serport = "something"
+    camport = "/dev/ttyS016"
+    serport = "/dev/tty.usbserial-DN02K2C4"
 
 def main():
 

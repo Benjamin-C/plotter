@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 from linefont import linefont
 import re
 
+if __name__ == "__main__":
+    import opencvtest
+
 class Plotter():
 
     def __init__(self, port, printSer=False):
@@ -87,6 +90,9 @@ class Plotter():
         return self._robotX, self._robotY, self._robotZ
 
     def readPos(self):
+        if self._ser != None:
+            while self._ser.in_waiting:
+                pass
         self._serin = [""]
         print(len(self._serin))
         self.cmd("?")

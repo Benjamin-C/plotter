@@ -5,6 +5,7 @@ import numpy as np
 import threading
 import bencvlib
 import time
+import platform
 
 """
 Demo program that displays a webcam using OpenCV
@@ -13,11 +14,19 @@ Demo program that displays a webcam using OpenCV
 import random
 import machine
 
-camport = "/dev/video16"
+camport = None
+serport = None
+
+if platform.system() == 'Linux':
+    camport = "/dev/video16"
+    serport = "/dev/ttyUSB0"
+elif platform.system() == 'Darwin':
+    camport = "something"
+    serport = "something"
 
 def main():
 
-    p = machine.Plotter("/dev/ttyUSB0", True)
+    p = machine.Plotter(serport, True)
     p.readPos()
 
     sg.theme('Black')

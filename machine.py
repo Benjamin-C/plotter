@@ -3,6 +3,7 @@ import time
 import threading
 import matplotlib.pyplot as plt
 from linefont import linefont
+from serial.tools import list_ports
 import re
 
 class Plotter():    
@@ -21,6 +22,7 @@ class Plotter():
             ser = serial.Serial(port.device, 9600, timeout=1)
             ser.flushInput()
             ser.flushOutput()
+            port = "/dev/cu.usbserial-DN02K2C4"
             
         self._ser = serial.Serial(port, 115200)
 

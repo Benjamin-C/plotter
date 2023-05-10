@@ -175,11 +175,6 @@ class Plotter():
     def relMode(self):
         self.cmd("g91")
 
-    # (x, y, liftonredraw)
-    # If lift is true or omitted, the line will be drawn from the previous point to this point when redraw is enabled.
-    # If lift is false, the line from the previous point to this point will not be drawn
-    # Use values from 0-1 as a fraction of the size (width/height) of the character
-
     def writeLetter(self, l, x, y, z, width=10, height=None, zlift=10, font=None, redraw=False, writespd=60000, travelspd=60000):
         ''' Writes a letter
         

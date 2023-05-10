@@ -3,6 +3,7 @@ import time
 import threading
 import matplotlib.pyplot as plt
 from linefont import linefont
+import re
 
 class Plotter():
 
@@ -25,10 +26,13 @@ class Plotter():
 
         self._readyEvent = threading.Event()
         self._okEvent = threading.Event()
+        self._distZeroEvent = threading.Event()
         self._runningEvent = threading.Event()
         self._runningEvent.set()
 
         self._serin = []
+
+        self.broken = False
 
         if self._ser != None:
             self._reader = threading.Thread(target=self.readSerial)
@@ -57,14 +61,30 @@ class Plotter():
                         print("[~~] Found done")
                     if "ok>" in line:
                         self._okEvent.set()
+                        print("[~~] Found OK")
+                    if 'dist:0' in line:
+                        self._distZeroEvent.set()
+                        print("[~~] Found dist:0")
                     self._serin.append(line)
                     if self.printSer:
                         print("[<-]", line)
+                    if "posx" in line:
+                        self._robotX = float(re.search("([0-9]+)(\.+)([0-9]+)", line.split("posx")[1])[0])
+                    if "posy" in line:
+                        self._robotY = float(re.search("([0-9]+)(\.+)([0-9]+)", line.split("posy")[1])[0])
+                    if "posz" in line:
+                        self._robotZ = float(re.search("([0-9]+)(\.+)([0-9]+)", line.split("posz")[1])[0])
+                    if '"st":204' in line:
+                        self.broken = True
+                    
             else:
                 print("ser was none")
                 time.sleep(1)
         print("Closing")
         self._runningEvent.set()
+
+    def getPos(self):
+        return self._robotX, self._robotY, self._robotZ
 
     def readPos(self):
         self._serin = [""]
@@ -102,6 +122,8 @@ class Plotter():
         self.waitForCompletion()
         self.cmd("g28.2 y0")
         self.waitForCompletion()
+        self.g0(0, 0, 0)
+        self.waitForCompletion()
         self._robotX = 0
         self._robotY = 0
         self._robotZ = 0
@@ -135,6 +157,11 @@ class Plotter():
                 self._xfly.append(None)
                 self._yfly.append(None)
 
+    def moveRel(self, x=None, y=None, z=None, f=None, fast=True):
+        self.relMode()
+        self.gmove(1 if fast else 0, x, y, z, f)
+        self.absMode()
+
     def cmd(self, c=""):
         self._file.write(c)
         if self.printSer:
@@ -153,7 +180,7 @@ class Plotter():
     # If lift is false, the line from the previous point to this point will not be drawn
     # Use values from 0-1 as a fraction of the size (width/height) of the character
 
-    def writeLetter(self, l, x, y, z, width=10, height=None, zlift=10, font=None, redraw=False):
+    def writeLetter(self, l, x, y, z, width=10, height=None, zlift=10, font=None, redraw=False, writespd=60000, travelspd=60000):
         ''' Writes a letter
         
         l is the letter
@@ -169,20 +196,20 @@ class Plotter():
         if font == None:
             font = linefont
         if l in font:
-            self.g0(z=z-zlift)
-            self.g0((font[l][0][0]*width) + x, (font[l][0][1]*height) + y)
+            self.g0(z=z-zlift, f=travelspd)
+            self.g0((font[l][0][0]*width) + x, (font[l][0][1]*height) + y, f=travelspd)
             lifted = True
             for step in font[l]:
                 if len(step) > 2 and not (redraw and step[2]):
                     if not lifted:
-                        self.g0(z=z-zlift)
+                        self.g0(z=z-zlift, f=travelspd)
                         lifted = True
                 else:
                     if lifted:
-                        self.g0(z=z)
+                        self.g0(z=z, f=travelspd)
                         lifted = False
-                self.gmove(0 if lifted else 1, (step[0]*width) + x, (step[1]*height) + y)
-            self.g0(z=z-zlift)
+                self.gmove(0 if lifted else 1, (step[0]*width) + x, (step[1]*height) + y, f=(travelspd if lifted else writespd))
+            self.g0(z=z-zlift, f=travelspd)
         else:
             print("Letter not in font")
         return (width, height)
@@ -214,16 +241,25 @@ class Plotter():
                 y -= h + (spacing * (h/w))
 
     def waitForCompletion(self):
-        print("[###] Waiting ...")
+        print("[##] Waiting for completion ...")
         self._readyEvent.wait()
         time.sleep(0.1)
         self._readyEvent.clear()
-        print("[###] Done waiting")
+        print("[##] Done waiting for completion ")
 
     def waitForOK(self):
+        print("[##] Waiting for OK ...")
         self._okEvent.wait()
         time.sleep(0.1)
         self._okEvent.clear()
+        print("[##] Done waiting for OK ")
+
+    def waitForDistZero(self):
+        print("[##] Waiting for dist:0 ...")
+        self._distZeroEvent.wait()
+        time.sleep(0.1)
+        self._distZeroEvent.clear()
+        print("[##] Done waiting for dist:0 ...")
 
     def plotPreview(self):
         fig,ax = plt.subplots()

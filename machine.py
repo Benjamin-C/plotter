@@ -4,15 +4,27 @@ import threading
 import matplotlib.pyplot as plt
 from linefont import linefont
 import re
+import numpy as np
+import cv2
+import bencvlib
 
 if __name__ == "__main__":
     import opencvtest
 
 class Plotter():
 
-    def __init__(self, port, printSer=False):
+    def __init__(self, serialport, camport, printSer=False, name="Plotter"):
         # ser = None
-        self._ser = serial.Serial(port, 115200)
+        self._ser = serial.Serial(serialport, 115200)
+        self._cam = cv2.VideoCapture(camport)
+        testimg = self._cam.read()[1]
+        if testimg is None:
+            print(f"Invalid Image Port {camport}, aborting!")
+            exit()
+        self._imgDebugFuncs = []
+        self._name = name
+
+        self._setStatus("Starting")
 
         self.printSer = printSer
 
@@ -30,10 +42,13 @@ class Plotter():
         self._readyEvent = threading.Event()
         self._okEvent = threading.Event()
         self._distZeroEvent = threading.Event()
+        self._movedEvent = threading.Event()
         self._runningEvent = threading.Event()
         self._runningEvent.set()
 
         self._serin = []
+
+        self._isRelMode = False
 
         self.broken = False
 
@@ -42,12 +57,90 @@ class Plotter():
             self._reader.start()
             # print("Reader started")
             time.sleep(2)
-        print("Ready")
+        self._resetStatus()
 
+    def _setStatus(self, newStatus):
+        self._status = newStatus
+        self._dbg(f"Status -> {newStatus}")
+
+    def _resetStatus(self):
+        self._setStatus("Ready")
+
+    def _dbg(self, msg):
+        print(f"[{self._name}] {msg}")
+
+    def getStatus(self):
+        return self._status
+
+    def getCamImg(self):
+        mainframe = self._cam.read()[1]
+        if mainframe is not None:
+            width = mainframe.shape[1]
+            height = mainframe.shape[0]
+            altframe = mainframe
+            for func in self._imgDebugFuncs:
+                mainframe, altframe = func(mainframe, altframe, width, height)
+            return mainframe, altframe, width, height
+        else:
+            self._setStatus("Cam borked")
+            self.broken = True
+    
+    
+    def centerOnDot(self, thresh, blur, startStep, stopStep):
+        ''' blocking '''
+
+        self._setStatus("Centering")
+
+        # Show dot while centering, not otherwise
+        def imfunc(frame, dbg, width, height):
+            cX, cY, img, = bencvlib.findCenter(frame, blur, thresh)
+            cv2.circle(frame, (cX, cY), 5, (255, 0, 255), -1)
+            return frame, img
+        self._imgDebugFuncs.append(imfunc)
+
+        centerMoveSize = startStep
+        while centerMoveSize > stopStep:
+            # Getting the height and width of the image
+            frame = self._cam.read()[1]
+            cX, cY, img, = bencvlib.findCenter(frame, blur, thresh)
+            self._dbg("Read new image?")
+
+            if cX >= 0 and cY >= 0:
+                height = frame.shape[0]
+                width = frame.shape[1]
+                midx = width//2
+                midy = height//2
+                
+                centerMoveSize /= 2
+                gx = 0
+                gy = 0
+                if cX > midx:
+                    gx = centerMoveSize
+                    self._dbg(f"Going right ({cX} > {midx})")
+                else:
+                    gx = -1 * centerMoveSize
+                    self._dbg(f"Going Left ({cX} < {midx})")
+                if cY > midy:
+                    gy = -1 * centerMoveSize
+                    self._dbg(f"Going Towards ({cY} > {midy})")
+                else:
+                    gy = centerMoveSize
+                    self._dbg(f"Going Away ({cY} < {midy})")
+                self._dbg(f"Centering {centerMoveSize} {gx} {gy}")
+                self.moveRel(gx, gy)
+                if centerMoveSize > 1:
+                    self.waitForMoved()
+                time.sleep(1)
+            else:
+                self._dbg("Lost Circle")
+
+        self._imgDebugFuncs.remove(imfunc)
+        self._resetStatus()
+
+        cv2.waitKey()
+    
     def readSerial(self):
         while(self._runningEvent.is_set()):
-            # pass
-            # print(ser)
             if self._ser != None:
                 try:
                     start = time.time()
@@ -61,12 +154,14 @@ class Plotter():
                     line = line.decode()[:-1]
                     if '"stat":3' in line or 'stat:3' in line:
                         self._readyEvent.set()
+                        self._movedEvent.set()
                         print("[~~] Found done")
                     if "ok>" in line:
                         self._okEvent.set()
                         print("[~~] Found OK")
                     if 'dist:0' in line:
                         self._distZeroEvent.set()
+                        self._movedEvent.set()
                         print("[~~] Found dist:0")
                     self._serin.append(line)
                     if self.printSer:
@@ -79,6 +174,7 @@ class Plotter():
                         self._robotZ = float(re.search("([0-9]+)(\.+)([0-9]+)", line.split("posz")[1])[0])
                     if '"st":204' in line:
                         self.broken = True
+                        self._setStatus("Broken")
                     
             else:
                 print("ser was none")
@@ -145,7 +241,7 @@ class Plotter():
         sy = f" y{y:.1f}" if y != None else ""
         sz = f" z{z:.1f}" if z != None else ""
         se = f" e{e:.1f}" if e != None else ""
-        sf = f" f{f:d}" if f != None else ""
+        sf = f" f{f:.0f}" if f != None else ""
         self.cmd(f"g{gnum}{sx}{sy}{sz}{se}{sf}")
         self._robotX = x if x != None else self._robotX
         self._robotY = y if y != None else self._robotY
@@ -164,9 +260,14 @@ class Plotter():
                 self._yfly.append(None)
 
     def moveRel(self, x=None, y=None, z=None, f=None, fast=True):
-        self.relMode()
-        self.gmove(1 if fast else 0, x, y, z, f)
-        self.absMode()
+        if not self._isRelMode:
+            self.relMode()
+        self.gmove(1 if fast else 0, x, y, z, f=f)
+
+    def move(self, x=None, y=None, z=None, f=None, fast=True):
+        if self._isRelMode:
+            self.absMode()
+        self.gmove(1 if fast else 0, x, y, z, f=f)
 
     def cmd(self, c=""):
         self._file.write(c)
@@ -176,9 +277,11 @@ class Plotter():
             self._ser.write((c+"\n").encode())
 
     def absMode(self):
+        self._isRelMode = False
         self.cmd("g90")
 
     def relMode(self):
+        self._isRelMode = True
         self.cmd("g91")
 
     # (x, y, liftonredraw)
@@ -230,7 +333,9 @@ class Plotter():
         wrapwidth is the width to wrap text to, defaults to 1e99, use large numbers to disable
         '''
 
-        self.readPos()
+        self._setStatus("Plotting text")
+        if x is None or y is None:
+            self.readPos()
         if x == None:
             x = self._robotX
         if y == None:
@@ -245,6 +350,7 @@ class Plotter():
             if mx > x + wrapwidth:
                 mx = x
                 y -= h + (spacing * (h/w))
+        self._resetStatus()
 
     def waitForCompletion(self):
         print("[##] Waiting for completion ...")
@@ -266,6 +372,13 @@ class Plotter():
         time.sleep(0.1)
         self._distZeroEvent.clear()
         print("[##] Done waiting for dist:0 ...")
+
+    def waitForMoved(self):
+        print("[##] Waiting for movement ...")
+        self._movedEvent.wait()
+        time.sleep(0.1)
+        self._movedEvent.clear()
+        print("[##] Done waiting for movement ...")
 
     def plotPreview(self):
         fig,ax = plt.subplots()

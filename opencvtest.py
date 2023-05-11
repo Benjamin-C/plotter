@@ -3,7 +3,6 @@ import PySimpleGUI as sg
 import cv2
 import numpy as np
 import threading
-import bencvlib
 import time
 import platform
 
@@ -26,7 +25,7 @@ elif platform.system() == 'Darwin':
 
 def main():
 
-    p = machine.Plotter(serport, True)
+    p = machine.Plotter(serport, camport, True)
     p.readPos()
 
     sg.theme('Black')
@@ -46,7 +45,7 @@ def main():
     # define the window layout
     layout = [[sg.Text('OpenCV Demo', size=(40, 1), justification='center', font='Helvetica 20')],
               [sg.Image(filename='', key='image'), controls],
-              [sg.Button('Go', size=(10, 1)), sg.Text("000.000", key="posx"), sg.Text("000.000", key="posy"), sg.Text("000.000", key="posz"), sg.Text("Status: ", key="status")],
+              [sg.InputText(default_text="Hi", size=(10,1), key="plottext"), sg.Button('Go', size=(10, 1)), sg.Text("000.000", key="posx"), sg.Text("000.000", key="posy"), sg.Text("000.000", key="posz"), sg.Text("Status: ", key="status")],
               [sg.Text("Thresh", size=(6, 1)), sg.Slider(range=(0, 255), default_value=75, expand_x=True, enable_events=True, orientation='horizontal', key='threshslider')],
               [sg.Text("Blur", size=(6, 1)), sg.Slider(range=(0, 255), default_value=11, expand_x=True, enable_events=True, orientation='horizontal', key='blurslider')],
               [sg.Image(filename='', key='image2')]]
@@ -60,8 +59,6 @@ def main():
     # for b in hiddenButtons:
     #     if b in window:
     # window["C2"].Update(visible=False)
-
-    cap = cv2.VideoCapture(camport)
 
     def setSlowSpeed():
         window['stepx'].update(value=f"5")
@@ -81,8 +78,7 @@ def main():
             try:
                 step = float(vals["step" + dir]) * mul
                 speed = float(vals["feed"])
-                p.relMode()
-                p.cmd(f"{dir}{step:.1f} f{speed:.0f}")
+                p.moveRel(x=step if dir == 'x' else None, y=step if dir == 'y' else None, z=step if dir == 'z' else None, f=speed)
             except Exception as e:
                 print("Something is wrong!")
                 print(e)
@@ -91,31 +87,13 @@ def main():
 
     setSlowSpeed()
 
-    def waitForDone(sleep=0, waitForPlotter=True):
-        if waitForPlotter:
-            p.waitForDistZero()
-        time.sleep(sleep)
-
-    doingCenterMove = False
-    centerMoveSize = 16
-    origCenterMoveSize = 16
-    centerWaitThread = None
-
     while True:
         event, values = window.read(timeout=20)
         if event == 'Exit' or event == sg.WIN_CLOSED:
+            p.close()
+            exit()
             return
-
-        elif event == 'Record':
-            recording = True
-
-        elif event == 'Stop':
-            recording = False
-            img = np.full((480, 640), 255)
-            # this is faster, shorter and needs less includes
-            imgbytes = cv2.imencode('.png', img)[1].tobytes()
-            window['image'].update(data=imgbytes)
-
+        
         elif event == 'A1':
             print("away")
             move("y", 1, values)
@@ -140,66 +118,31 @@ def main():
             print("Home")
         elif event == "Go":
             print("Plotting")
-            p.relMode()
-            p.g1(x=62.9, y=17.4, f=60000)
-            p.plotText("A", width=15, spacing=3)
+            txt = values["plottext"]
+            if isinstance(txt, str):
+                p.moveRel(x=62.9, y=17.4, f=60000)
+                p.waitForMoved()
+                p.plotText(txt, width=15, spacing=3)
         elif event == "A2":
             print("Set tool height")
-            p.absMode()
-            p.g1(z=30)
+            p.move(z=30)
         elif event == "B3":
             print("z0")
-            p.absMode()
-            p.g1(z=0)
+            p.move(z=0)
         elif event == "A0":
             setSlowSpeed()
         elif event == "C0":
             setFastSpeed()
         elif event == "C2":
-            centerMoveSize = origCenterMoveSize * 2
-            doingCenterMove = True
-
-        ret, frame = cap.read()
-
-        if frame is not None:
-
-            grayImage = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             thresh = int(values["threshslider"])
             blur = int(values["blurslider"])
-            grayImage = cv2.medianBlur(grayImage, 1+((blur//2)*2))
-            cX, cY, img, = bencvlib.findCenter(grayImage, thresh)
-            cv2.circle(frame, (cX, cY), 5, (255, 0, 255), -1)
+            ht = threading.Thread(target=p.centerOnDot, args=(thresh, blur, 16, 0.1))
+            ht.start()
+            print("Centering")
 
-            # Getting the height and width of the image
-            height = frame.shape[0]
-            width = frame.shape[1]
-            midx = width//2
-            midy = height//2
+        frame, dbgframe, width, height = p.getCamImg()
 
-            if doingCenterMove:
-                if centerWaitThread is None or not centerWaitThread.is_alive():
-                    if centerMoveSize > 0.1:
-                        centerMoveSize /= 2
-                        gx = 0
-                        gy = 0
-                        if cX > midx:
-                            gx = centerMoveSize
-                        else:
-                            gx = -centerMoveSize
-                        if cY > midy:
-                            gy = -centerMoveSize
-                        else:
-                            gy = centerMoveSize
-                        print(f"Centering {centerMoveSize}")
-                        p.moveRel(gx, gy)
-                        if centerMoveSize > 1:
-                            centerWaitThread = threading.Thread(target=waitForDone, args=(1,))
-                        else:
-                            centerWaitThread = threading.Thread(target=waitForDone, args=(2,False))
-                        centerWaitThread.start()
-                    else:
-                        doingCenterMove = False
-                        centerMoveSize = 999
+        if frame is not None:
 
             # Drawing the lines
             cv2.line(frame, (width//2, 0), (width//2, height), (64, 64, 64), 1)
@@ -208,7 +151,8 @@ def main():
             imgbytes = cv2.imencode('.png', frame)[1].tobytes()  # ditto
             window['image'].update(data=imgbytes)
 
-            imgbytes2 = cv2.imencode('.png', img)[1].tobytes()  # ditto
+        if dbgframe is not None:
+            imgbytes2 = cv2.imencode('.png', dbgframe)[1].tobytes()  # ditto
             window['image2'].update(data=imgbytes2)
 
         x,y,z = p.getPos()
@@ -216,13 +160,7 @@ def main():
         window['posy'].update(value=f"y:{y:7.3f}")
         window['posz'].update(value=f"z:{z:7.3f}")
 
-        if p.broken:
-            window['status'].update(value="Status: Broke")
-        else:
-            if doingCenterMove:
-                window['status'].update(value=f"Status: Centering {centerMoveSize:.2g}")
-            else:
-                window['status'].update(value="Status: Ready")
+        window['status'].update(value="Status: " + p.getStatus())
 
 main()
 exit()
